@@ -1,0 +1,3 @@
+[submodule "external/cnbt"]
+	path = external/cnbt
+	url = git://github.com/FliPPeh/cNBT.git

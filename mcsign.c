@@ -45,6 +45,9 @@ char *opt_output_format = DEFAULT_OUTPUT_FORMAT;
 char *opt_world_path = NULL;
 char *opt_output_path = NULL;
 
+#define DEFAULT_WORKERS 1
+int opt_workers = DEFAULT_WORKERS;
+
 struct region_data {
 	int x, y;
 	char *filename;
@@ -54,6 +57,10 @@ struct region_data {
 
 struct sign_data {
 	char **lines[3];
+};
+
+struct work {
+	int rx, ry;
 };
 
 bool cnbt_map_sign(nbt_node *node, void *aux) {
@@ -306,6 +313,47 @@ out:
 	nbt_free(node_root);
 }
 
+void worker(gpointer data, gpointer user_data) {
+	GAsyncQueue *buffer_queue = (GAsyncQueue *) user_data;
+	struct work *work = (struct work *)data;
+	int len;
+	struct region_desc *region;
+	struct region_data rdata;
+	char *filename;
+
+	DBG("worker: Got work: %p %d %d", work, work->rx, work->ry);
+	/* === Open and iterate inside region == */
+	if (region_open(&region, opt_world_path, work->rx, work->ry)) {
+		ERR("Error while opening region %d %d", work->rx,
+				work->ry);
+		return;
+	}
+
+	len = asprintf(&filename, "%s/signs.%d.%d.in", opt_output_path,
+			work->rx, work->ry);
+	if (len < 0)
+		return;
+
+	rdata.x = work->rx;
+	rdata.y = work->ry;
+	rdata.filename = filename;
+	rdata.fp = NULL;
+
+	/* Return the buffer */
+	g_async_queue_push(buffer_queue, work);
+
+	foreach_part_in_region(region, region_iterator, &rdata);
+
+	/* Remove file if nothing was found in the region file */
+	if (rdata.fp == NULL)
+		unlink(filename);
+	else
+		fclose(rdata.fp);
+
+	free(filename);
+	region_close(region);
+}
+
 void print_help(void) {
 	ERR0("Usage: mcsign [ OPTIONS ]");
 	ERR0("Fetches sign data from Minecraft region files and outputs data to one file");
@@ -320,6 +368,8 @@ void print_help(void) {
 	ERR0("                           at least one matching sign. Signs need to contain");
 	ERR0("                           only '#map' without single quotes on the first row");
 	ERR0("                           to be output in these");
+	ERR0("  -t, --threads=THREADS    the number of worker threads to be spawned,");
+	ERR( "                           default: %d", DEFAULT_WORKERS);
 	ERR0("  -w, --world-path=PATH    the path in the minecraft directory where the");
 	ERR0("                           world is stored, usually 'world/'. This directory");
 	ERR0("                           should contain, among other things, the 'region/'");
@@ -350,7 +400,6 @@ void print_help(void) {
 	ERR0("mcsign home page: <http://github.com/zqad/mcsign/>");
 }
 
-
 static int parse_options(int argc, char *argv[])
 {
 	char opt;
@@ -359,10 +408,11 @@ static int parse_options(int argc, char *argv[])
 		{"help",        no_argument,       0,  0 },
 		{"format",      required_argument, 0,  0 },
 		{"output-path", required_argument, 0,  0 },
+		{"threads",     required_argument, 0,  0 },
 		{"world-path",  required_argument, 0,  0 },
 		{0,             0,                 0,  0 }
 	};
-	const char *short_options = "hf:o:w:";
+	const char *short_options = "hf:o:t:w:";
 
 	while (1) {
 		opt = getopt_long(argc, argv, short_options,
@@ -383,6 +433,9 @@ static int parse_options(int argc, char *argv[])
 				opt = 'o';
 				break;
 			case 3:
+				opt = 't';
+				break;
+			case 4:
 				opt = 'w';
 				break;
 			}
@@ -397,6 +450,13 @@ static int parse_options(int argc, char *argv[])
 			break;
 		case 'o':
 			opt_output_path = optarg;
+			break;
+		case 't':
+			if (sscanf(optarg, "%u", &opt_workers) != 1 ||
+					opt_workers < 1) {
+				ERR0("Number of workers expected to be >1");
+				exit(1);
+			}
 			break;
 		case 'w':
 			opt_world_path = optarg;
@@ -417,47 +477,61 @@ static int parse_options(int argc, char *argv[])
 }
 
 int main(int argc, char *argv[]) {
-	int r;
+	int i;
 	char *filename;
 	int rx, ry;
-	int len;
-	FILE *f;
-	struct region_desc *region;
-	struct region_data rdata;
+	GAsyncQueue *buffer_queue;
+	struct work *work_buffers;
+	struct work *work;
+	GError *gerror;
+	GThreadPool *worker_pool;
 
 	parse_options(argc, argv);
 
+	buffer_queue = g_async_queue_new();
+
+	/* Prepare buffers, 10*workers ought to be enough for anyone */
+	work_buffers = calloc(10 * opt_workers, sizeof(struct work));
+	if (work_buffers == NULL) {
+		perror("mcsign");
+		exit(1);
+	}
+	for (i = 0; i < 10 * opt_workers; i++)
+		g_async_queue_push(buffer_queue, &work_buffers[i]);
+
+	/* Start workers */
+	worker_pool = g_thread_pool_new(worker, buffer_queue, opt_workers,
+			TRUE, &gerror);
+	if (worker_pool == NULL) {
+		ERR("Error while allocating pool: %s", gerror->message);
+		exit(1);
+	}
+
 	while (scanf("%d %d", &rx, &ry) == 2) {
 
-		DBG("main: %d %d", rx, ry);
-
-		/* === Open and iterate inside region == */
-		if (region_open(&region, opt_world_path, rx, ry)) {
-			ERR("Error while opening region %d %d", rx, ry);
-			continue;
+		work = (struct work *)g_async_queue_pop(buffer_queue);
+		work->rx = rx;
+		work->ry = ry;
+		printf("data\n");
+		
+		if (!g_thread_pool_push(worker_pool, work, &gerror)) {
+			ERR("Error while pushing work to pool: %s",
+					gerror->message);
+			exit(1);
 		}
+		printf("data2\n");
 
-		len = asprintf(&filename, "%s/signs.%d.%d.in", opt_output_path,
-				rx, ry);
-		if (len < 0)
-			return -ENOMEM;
-
-		rdata.x = rx;
-		rdata.y = ry;
-		rdata.filename = filename;
-		rdata.fp = NULL;
-
-		foreach_part_in_region(region, region_iterator, &rdata);
-
-		/* Remove file if nothing was found in the region file */
-		if (rdata.fp == NULL)
-			unlink(filename);
-		else
-			fclose(rdata.fp);
-
-		free(filename);
-		region_close(region);
+		DBG("main: pushed %d %d", rx, ry);
 
 	}
+
+	/* Kill workers */
+	g_thread_pool_free(worker_pool, FALSE, TRUE); /* finish queue & wait
+							 for completion */
+
+	g_async_queue_unref(buffer_queue);
+	/* All workers has exited, so we can safely free the work buffers */
+	free(work_buffers);
+
 	return 0;
 }

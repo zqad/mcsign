@@ -24,8 +24,10 @@
 
 #ifdef DEBUG
 #define DBG(_errstr, ...) fprintf(stderr, "dbg: " _errstr "\n", __VA_ARGS__)
+#define DBG0(_errstr) fprintf(stderr, "dbg:" _errstr "\n")
 #else
 #define DBG(_errstr, ...) do{}while(0)
+#define DBG0(_errstr) do{}while(0)
 #endif
 
 #define ERR0(_errstr) fprintf(stderr, _errstr "\n")

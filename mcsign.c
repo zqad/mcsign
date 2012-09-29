@@ -190,7 +190,7 @@ size_t outf(FILE *fp, const char *format, nbt_node *node) {
 				fetch_value_str(node, "Text4", &text4);
 				if (*text4 != 0) {
 					ret = snprintf(buf_it, buf_left, "%s",
-							*text4);
+							text4);
 					handle_ret = 1;
 				}
 				break;

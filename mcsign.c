@@ -42,21 +42,25 @@
 char *opt_output_format = DEFAULT_OUTPUT_FORMAT;
 #define OUTPUT_BUF_SIZE 1024 /* Write output in at most 1k-blocks */
 
-char *opt_world_path = NULL;
 char *opt_output_path = NULL;
 
 #define DEFAULT_WORKERS 1
 int opt_workers = DEFAULT_WORKERS;
 
+enum input_format {
+	white_space,
+	null,
+};
+enum input_format opt_input_format = white_space;
+
 struct region_data {
-	int x, y;
 	char *filename;
 	FILE *fp;
 	int written;
 };
 
 struct work {
-	int rx, ry;
+	char *filename;
 };
 
 bool cnbt_map_sign(nbt_node *node, void *aux) {
@@ -287,7 +291,7 @@ void region_iterator(void *data, size_t len, void *user_data) {
 	/* Open file descriptor if not opened already */
 	if (rdata->fp == NULL) {
 		fp = fopen(rdata->filename, "w");
-		if (fp < 0) {
+		if (fp == NULL) {
 			ERR("Unable to open output file %s: %d",
 					rdata->filename, errno);
 			exit(1);
@@ -310,27 +314,35 @@ void worker(gpointer data, gpointer user_data) {
 	int len;
 	struct region_desc *region;
 	struct region_data rdata;
+	char *fn_iter;
 	char *filename;
 
-	DBG("worker: Got work: %p %d %d", work, work->rx, work->ry);
+	DBG("worker: Got work: %p %s", work, work->filename);
 	/* === Open and iterate inside region == */
-	if (region_open(&region, opt_world_path, work->rx, work->ry)) {
-		ERR("Error while opening region %d %d", work->rx,
-				work->ry);
+	if (region_open(&region, work->filename)) {
+		ERR("Error while opening region file '%s'", work->filename);
 		return;
 	}
 
-	len = asprintf(&filename, "%s/signs.%d.%d.in", opt_output_path,
-			work->rx, work->ry);
+	/* === Build the destination file name === */
+
+	/* Find the base name of the file (file name w/o path) */
+	fn_iter = &work->filename[strlen(work->filename) - 1];
+	while (*fn_iter != '/' && fn_iter != work->filename)
+		fn_iter--;
+
+	/* Construct the target file name */
+	len = asprintf(&filename, "%s/%s.sign", opt_output_path,
+			fn_iter);
 	if (len < 0)
 		return;
 
-	rdata.x = work->rx;
-	rdata.y = work->ry;
 	rdata.filename = filename;
 	rdata.fp = NULL;
 
 	/* Return the buffer */
+	free(work->filename);
+	work->filename = NULL;
 	g_async_queue_push(buffer_queue, work);
 
 	foreach_part_in_region(region, region_iterator, &rdata);
@@ -345,12 +357,114 @@ void worker(gpointer data, gpointer user_data) {
 	region_close(region);
 }
 
+struct input_context {
+	char *buffer;
+	int bsize;
+	int bpos;
+};
+
+void init_input_context(struct input_context *ic) {
+	ic->buffer = malloc(1024);
+	if (ic->buffer == NULL) {
+		perror("mcsign");
+		exit(1);
+	}
+	ic->bsize = 1024;
+	ic->bpos = 0;
+}
+
+int static inline does_match(char c) {
+	switch (c) {
+	case '\t':
+	case '\n':
+	case '\r':
+	case ' ':
+		if (opt_input_format == white_space)
+			return 1;
+		break;
+
+	case 0:
+		if (opt_input_format == null)
+			return 1;
+		break;
+	}
+
+	return 0;
+}
+
+char *get_input(struct input_context *ic) {
+	ssize_t r;
+	char *tmp;
+	int i, start_position;
+
+	/* Real EOF indication */
+	if (ic->buffer == NULL)
+		return NULL;
+	
+	while (1) {
+		/* Skip past any matched delimiter-characters in the beginning
+		 * of the buffer */
+		i = 0;
+		while (i < ic->bpos && does_match(ic->buffer[i]))
+			i++;
+
+		/* Record start and search for next delimiter */
+		start_position = i;
+		while (i < ic->bpos && !does_match(ic->buffer[i]))
+			i++;
+
+		/* Do we have a match? */
+		if (i <= ic->bpos && does_match(ic->buffer[i])
+					&& i != start_position) {
+			ic->buffer[i] = 0;
+
+			tmp = strdup(&ic->buffer[start_position]);
+
+			/* Increment i, as it is now pointing to the end of
+			 * the previous delimited substring */
+			i++;
+			/* Anything worth saving? */
+			if (i < ic->bpos)
+				memmove(ic->buffer, &ic->buffer[i],
+						ic->bpos - i);
+			ic->bpos -= i;
+
+			return tmp;
+		}
+
+		/* Do a read */
+		r = read(STDIN_FILENO, &ic->buffer[ic->bpos],
+				ic->bsize - ic->bpos);
+		ic->bpos += r;
+		/* Handle EOF */
+		if (r == 0) {
+			free(ic->buffer);
+			ic->buffer = NULL;
+			return NULL;
+		}
+
+		/* Grow buffer if we hit the ceiling */
+		if (ic->bpos == ic->bsize) {
+			ic->buffer = realloc(ic->buffer, ic->bsize * 2);
+			if (ic->buffer == NULL) {
+				perror("mcsign");
+				exit(1);
+			}
+			ic->bsize *= 2;
+		}
+
+	}
+
+}
+
 void print_help(void) {
 	ERR0("Usage: mcsign [ OPTIONS ]");
 	ERR0("Fetches sign data from Minecraft region files and outputs data to one file");
 	ERR0("per region file read.");
 	ERR0("");
 	ERR0("Mandatory arguments to long options are mandatory for short options too.");
+	ERR0("  -0, --null               data on standard is terminated by a null characted");
+	ERR0("                           (like find -print0 and xargs -0");
 	ERR0("  -f, --format=FORMAT      specify how the output is to be formatted. If this");
 	ERR0("                           argument is not specified, the default format will");
 	ERR0("                           be used (see below).");
@@ -361,15 +475,11 @@ void print_help(void) {
 	ERR0("                           to be output in these");
 	ERR0("  -t, --threads=THREADS    the number of worker threads to be spawned,");
 	ERR( "                           default: %d", DEFAULT_WORKERS);
-	ERR0("  -w, --world-path=PATH    the path in the minecraft directory where the");
-	ERR0("                           world is stored, usually 'world/'. This directory");
-	ERR0("                           should contain, among other things, the 'region/'");
-	ERR0("                           directory.");
 	ERR0("  -h, --help               display this help and exit");
 	ERR0("");
-	ERR0("Output path and world path are required arguments.");
+	ERR0("Output path is a required argument.");
 	ERR0("");
-	ERR0("When started, mcsign will read region coordinates on standard input, waiting");
+	ERR0("When started, mcsign will read region file paths on standard input, waiting");
 	ERR0("for an end of file.");
 	ERR0("");
 	ERR0("Default output format:");
@@ -388,11 +498,15 @@ void print_help(void) {
 	ERR0("      contain a matching sign. This is done to enable");
 	ERR0("      incremental re-runs.");
 	ERR0("");
+	ERR0("Note: Destination file names are generated from the source file name, meaning");
+	ERR0("      that if two source files with the same file name (e.g. region/r.0.0.mca");
+	ERR0("      and region/DIM-1/r.0.0.mca) is written to standard in, the first output");
+	ERR0("      file will be overwritten.");
+	ERR0("");
 	ERR0("mcsign home page: <http://github.com/zqad/mcsign/>");
 }
 
-static int parse_options(int argc, char *argv[])
-{
+static int parse_options(int argc, char *argv[]) {
 	char opt;
 	int option_index = 0;
 	static struct option long_options[] = {
@@ -400,10 +514,10 @@ static int parse_options(int argc, char *argv[])
 		{"format",      required_argument, 0,  0 },
 		{"output-path", required_argument, 0,  0 },
 		{"threads",     required_argument, 0,  0 },
-		{"world-path",  required_argument, 0,  0 },
+		{"null",        required_argument, 0,  0 },
 		{0,             0,                 0,  0 }
 	};
-	const char *short_options = "hf:o:t:w:";
+	const char *short_options = "hf:o:t:0";
 
 	while (1) {
 		opt = getopt_long(argc, argv, short_options,
@@ -427,7 +541,7 @@ static int parse_options(int argc, char *argv[])
 				opt = 't';
 				break;
 			case 4:
-				opt = 'w';
+				opt = '0';
 				break;
 			}
 		}
@@ -449,8 +563,8 @@ static int parse_options(int argc, char *argv[])
 				exit(1);
 			}
 			break;
-		case 'w':
-			opt_world_path = optarg;
+		case '0':
+			opt_input_format = null;
 			break;
 		default:
 			exit(1);
@@ -459,8 +573,8 @@ static int parse_options(int argc, char *argv[])
 	}
 
 	/* Check that we got all info needed */
-	if (opt_output_path == NULL || opt_world_path == NULL) {
-		ERR0("Output path and world path are required arguments");
+	if (opt_output_path == NULL) {
+		ERR0("Output path is a required argument");
 		exit(1);
 	}
 
@@ -469,12 +583,13 @@ static int parse_options(int argc, char *argv[])
 
 int main(int argc, char *argv[]) {
 	int i;
-	int rx, ry;
+	char *filename;
 	GAsyncQueue *buffer_queue;
 	struct work *work_buffers;
 	struct work *work;
 	GError *gerror;
 	GThreadPool *worker_pool;
+	struct input_context input_context;
 
 	parse_options(argc, argv);
 
@@ -497,19 +612,17 @@ int main(int argc, char *argv[]) {
 		exit(1);
 	}
 
-	while (scanf("%d %d", &rx, &ry) == 2) {
+	init_input_context(&input_context);
+	while (filename = get_input(&input_context)) {
 
 		work = (struct work *)g_async_queue_pop(buffer_queue);
-		work->rx = rx;
-		work->ry = ry;
-		printf("data\n");
+		work->filename = filename;
 		
 		if (!g_thread_pool_push(worker_pool, work, &gerror)) {
 			ERR("Error while pushing work to pool: %s",
 					gerror->message);
 			exit(1);
 		}
-		printf("data2\n");
 
 		DBG("main: pushed %d %d", rx, ry);
 

@@ -50,30 +50,14 @@ static int read_all(void *buf, int fd, size_t len) {
 	return len;
 }
 
-int region_open(struct region_desc **rd, const char *world_path,
-		int rx, int ry) {
-	char *file;
-	int len, fd;
+int region_open(struct region_desc **rd, const char *filename) {
+	int fd;
 	enum region_format format = anvil;
 	struct region_desc *desc;
 	struct stat stat_buf;
 
-	len = asprintf(&file, "%s/region/r.%d.%d.mca", world_path, rx, ry);
-	if (len < 0)
-		return -1;
-
-	fd = open(file, O_RDONLY);
+	fd = open(filename, O_RDONLY);
 	DBG("open '%s': %d", file, fd);
-	if (fd < 0) {
-		/* Fall back on .mcr by replacing the last a in the string and
-		 * trying again */
-		format = classic;
-		file[len - 1] = 'r';
-		fd = open(file, O_RDONLY);
-		DBG("open '%s': %d", file, fd);
-	}
-	free(file);
-
 	if (fd < 0)
 		return fd;
 
@@ -127,7 +111,6 @@ int region_close(struct region_desc *rd) {
 
 int foreach_part_in_region(struct region_desc *rd,
 		void (*func)(void *, size_t, void *), void *user_data) {
-	char *data;
 	uint32_t timestamp;
 	uint32_t tmp;
 	size_t metadata_pos, file_pos, data_size;

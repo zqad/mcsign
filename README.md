@@ -29,8 +29,7 @@ just remove that argument in the cnbt Makefile.
 Running
 -------
 
-mcsign is becoming increasingly user friendly. Run mcsign with -h or --help to
-get information about arguments.
+Run mcsign with -h or --help to get information about arguments.
 
 Matching signs is controlled by a #define in mcsign.c that does a strcmp on the
 first text line on a sign. By default, this is set to "#map" without the

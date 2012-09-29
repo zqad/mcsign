@@ -16,16 +16,16 @@ ts_file="$MINECRAFT_DIR/.mcsign-stamp"
 touch "$ts_file.new"
 
 if [ -e "$ts_file" ]; then
-  (cd $WORLD_DIR/region; find -newer "$ts_file") > $changes
+  find "$WORLD_DIR/region" -maxdepth 1 -type f -name '*.mca' -newer "$ts_file" -print0 > $changes
 else
-  (cd $WORLD_DIR/region; find) > $changes
+  find "$WORLD_DIR/region" -maxdepth 1 -type f -name '*.mca' -print0 > $changes
 fi
 
 if ! [ -d "$SIGNS" ]; then
   mkdir -p "$SIGNS"
 fi
 
-egrep -o 'r\.-?[0-9]*\.-?[0-9]*\.' $changes | cut -d. -f 2,3 | tr . ' ' | "$MCSIGN_DIR/mcsign" -w "$WORLD_DIR" -o "$SIGNS"
+"$MCSIGN_DIR/mcsign" -o "$SIGNS" -0 < $changes
 (
   echo "var markerData = ["
   find "$SIGNS" -name 'signs.*.in' -print0 | xargs -0 cat

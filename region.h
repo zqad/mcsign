@@ -38,8 +38,7 @@ struct region_desc {
 	off_t mapping_size;
 };
 
-int region_open(struct region_desc **region_desc, const char *world_path,
-		int rx, int ry);
+int region_open(struct region_desc **region_desc, const char *filename);
 
 int region_close(struct region_desc *region_desc);
 

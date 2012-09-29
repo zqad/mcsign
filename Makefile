@@ -4,7 +4,7 @@ CNBT_DIR=external/cnbt/
 EXTRA_DEPS=$(CNBT_DIR)/libnbt.a
 
 CNBT_CFLAGS=-Iexternal/cnbt/ -std=c99
-CFLAGS=$(CNBT_CFLAGS) $(shell pkg-config --cflags glib-2.0) -g -Wunused-parameter
+CFLAGS=$(CNBT_CFLAGS) $(shell pkg-config --cflags glib-2.0) -g -Wunused-variable
 #CFLAGS+=-DDEBUG
 
 CNBT_LDFLAGS=-L$(CNBT_DIR) -lnbt -lz

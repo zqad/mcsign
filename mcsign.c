@@ -55,10 +55,6 @@ struct region_data {
 	int written;
 };
 
-struct sign_data {
-	char **lines[3];
-};
-
 struct work {
 	int rx, ry;
 };
@@ -67,8 +63,6 @@ bool cnbt_map_sign(nbt_node *node, void *aux) {
 	GQueue **queue = (GQueue **)aux;
 	nbt_node *id_node;
 	nbt_node *t1_node;
-	nbt_node *t2_node, *t3_node, *t4_node;
-	struct sign_data *data;
 	
 	/* Should be a compound */
 	if (node->type != TAG_COMPOUND)
@@ -119,7 +113,6 @@ static inline void fetch_value_int(nbt_node *node, const char *name,
 
 static inline void fetch_value_str(nbt_node *node, const char *name,
 		const char **dst) {
-	nbt_node *found_node;
 
 	if (*dst != NULL)
 		return;
@@ -252,8 +245,6 @@ size_t outf(FILE *fp, const char *format, nbt_node *node) {
 void queue_output(gpointer data, gpointer user_data) {
 	FILE *fp = (FILE *)user_data;
 	nbt_node *node = (nbt_node *)data;
-	int x, y, z;
-	char *text2, *text3, *text4;
 
 	outf(fp, opt_output_format, node);
 
@@ -478,7 +469,6 @@ static int parse_options(int argc, char *argv[])
 
 int main(int argc, char *argv[]) {
 	int i;
-	char *filename;
 	int rx, ry;
 	GAsyncQueue *buffer_queue;
 	struct work *work_buffers;

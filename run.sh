@@ -28,7 +28,7 @@ fi
 egrep -o 'r\.-?[0-9]*\.-?[0-9]*\.' $changes | cut -d. -f 2,3 | tr . ' ' | "$MCSIGN_DIR/mcsign" "$WORLD_DIR" "$SIGNS"
 (
   echo "var markerData = ["
-  find "$SIGNS" -name 'signs.*.in' -print0 | xargs -0 sed 's/$/,/'
+  find "$SIGNS" -name 'signs.*.in' -print0 | xargs -0 cat
   echo "];"
 ) > "$DESTINATION.tmp"
 mv "$DESTINATION.tmp" "$DESTINATION"

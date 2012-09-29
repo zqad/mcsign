@@ -1,4 +1,5 @@
 mcsign
 *.o
 .*.swp
+Makefile.depend
 *~

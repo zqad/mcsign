@@ -30,6 +30,7 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <string.h>
+#include <getopt.h>
 
 #include "nbt.h"
 #include "debug.h"
@@ -38,10 +39,13 @@
 #define SIGN_TAG "#map"
 #define DEFAULT_OUTPUT_FORMAT "{ \"x\": \"%x\", \"y\": \"%y\", " \
 	"\"z\": \"%z\", \"msg\": \"%u %v %w (%x, %y, %z)\" },\n"
+char *opt_output_format = DEFAULT_OUTPUT_FORMAT;
 #define OUTPUT_BUF_SIZE 1024 /* Write output in at most 1k-blocks */
 
+char *opt_world_path = NULL;
+char *opt_output_path = NULL;
+
 struct region_data {
-	char *json_path;
 	int x, y;
 	char *filename;
 	FILE *fp;
@@ -244,7 +248,7 @@ void queue_output(gpointer data, gpointer user_data) {
 	int x, y, z;
 	char *text2, *text3, *text4;
 
-	outf(fp, DEFAULT_OUTPUT_FORMAT, node);
+	outf(fp, opt_output_format, node);
 
 	return;
 }
@@ -303,23 +307,113 @@ out:
 }
 
 void print_help(void) {
-	ERR0("Usage: mcsign [WORLD PATH] [DESTINATION PATH]");
-	ERR0("Where WORLD PATH is the path in the minecraft directory where");
-	ERR0("the world is stored, usually 'world/'. This directory should");
-	ERR0("contain, among other things, the 'region/' directory.");
-	ERR0("DESTINATION PATH is where files containing sign information");
-	ERR0("will be written, one for each .mca or .mcr that contains at");
-	ERR0("least one matching sign. Signs need to contain only '#map'");
-	ERR0("without single quotes on the first row to be output in these");
-	ERR0("files.");
-	ERR0("mcsign then read region coordinates on standard input, waiting");
+	ERR0("Usage: mcsign [ OPTIONS ]");
+	ERR0("Fetches sign data from Minecraft region files and outputs data to one file");
+	ERR0("per region file read.");
+	ERR0("");
+	ERR0("Mandatory arguments to long options are mandatory for short options too.");
+	ERR0("  -f, --format=FORMAT      specify how the output is to be formatted. If this");
+	ERR0("                           argument is not specified, the default format will");
+	ERR0("                           be used (see below).");
+	ERR0("  -o, --output-path=PATH   where files containing sign information will be");
+	ERR0("                           written, one for each .mca or .mcr that contains");
+	ERR0("                           at least one matching sign. Signs need to contain");
+	ERR0("                           only '#map' without single quotes on the first row");
+	ERR0("                           to be output in these");
+	ERR0("  -w, --world-path=PATH    the path in the minecraft directory where the");
+	ERR0("                           world is stored, usually 'world/'. This directory");
+	ERR0("                           should contain, among other things, the 'region/'");
+	ERR0("                           directory.");
+	ERR0("  -h, --help               display this help and exit");
+	ERR0("");
+	ERR0("Output path and world path are required arguments.");
+	ERR0("");
+	ERR0("When started, mcsign will read region coordinates on standard input, waiting");
 	ERR0("for an end of file.");
+	ERR0("");
+	ERR0("Default output format:");
+	ERR( "%s", DEFAULT_OUTPUT_FORMAT);
+	ERR0("The interpreted sequences in FORMAT are:");
+	ERR0("  %%t  First row of text in sign (this is what mcsign match against)");
+	ERR0("  %%u  Second row of text in sign");
+	ERR0("  %%v  Third row of text in sign");
+	ERR0("  %%w  Fourth row of text in sign");
+	ERR0("  %%x  X coordinate of the sign");
+	ERR0("  %%y  Y coordinate of the sign");
+	ERR0("  %%z  Z coordinate of the sign");
 	ERR0("");
 	ERR0("Note: mcsign will erase any existing output file corresponding");
 	ERR0("      to a region file if the region file is determined to not");
 	ERR0("      contain a matching sign. This is done to enable");
 	ERR0("      incremental re-runs.");
 	ERR0("");
+	ERR0("mcsign home page: <http://github.com/zqad/mcsign/>");
+}
+
+
+static int parse_options(int argc, char *argv[])
+{
+	char opt;
+	int option_index = 0;
+	static struct option long_options[] = {
+		{"help",        no_argument,       0,  0 },
+		{"format",      required_argument, 0,  0 },
+		{"output-path", required_argument, 0,  0 },
+		{"world-path",  required_argument, 0,  0 },
+		{0,             0,                 0,  0 }
+	};
+	const char *short_options = "hf:o:w:";
+
+	while (1) {
+		opt = getopt_long(argc, argv, short_options,
+				long_options, &option_index);
+		if (opt == -1)
+			break;
+
+		/* Map long opts to short opts */
+		if (opt == 0) {
+			switch (option_index) {
+			case 0:
+				opt = 'h';
+				break;
+			case 1:
+				opt = 'f';
+				break;
+			case 2:
+				opt = 'o';
+				break;
+			case 3:
+				opt = 'w';
+				break;
+			}
+		}
+		switch (opt) {
+		case 'h':
+			print_help();
+			exit(1);
+			break;
+		case 'f':
+			opt_output_format = optarg;
+			break;
+		case 'o':
+			opt_output_path = optarg;
+			break;
+		case 'w':
+			opt_world_path = optarg;
+			break;
+		default:
+			exit(1);
+			break;
+		}
+	}
+
+	/* Check that we got all info needed */
+	if (opt_output_path == NULL || opt_world_path == NULL) {
+		ERR0("Output path and world path are required arguments");
+		exit(1);
+	}
+
+	return optind;
 }
 
 int main(int argc, char *argv[]) {
@@ -330,27 +424,20 @@ int main(int argc, char *argv[]) {
 	FILE *f;
 	struct region_desc *region;
 	struct region_data rdata;
-	char *json_path;
-	char *world_path;
 
-	if (argc != 3) {
-		print_help();
-		return 1;
-	}
+	parse_options(argc, argv);
+
 	while (scanf("%d %d", &rx, &ry) == 2) {
-
-		world_path = argv[1];
-		json_path = argv[2];
 
 		DBG("main: %d %d", rx, ry);
 
 		/* === Open and iterate inside region == */
-		if (region_open(&region, world_path, rx, ry)) {
+		if (region_open(&region, opt_world_path, rx, ry)) {
 			ERR("Error while opening region %d %d", rx, ry);
 			continue;
 		}
 
-		len = asprintf(&filename, "%s/signs.%d.%d.in", json_path,
+		len = asprintf(&filename, "%s/signs.%d.%d.in", opt_output_path,
 				rx, ry);
 		if (len < 0)
 			return -ENOMEM;

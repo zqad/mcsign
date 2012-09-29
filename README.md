@@ -6,9 +6,9 @@ A pigmap-compatible sign data fetcher written in C using the cnbt library
 Building
 --------
 
-A version of cnbt that has been tested is included as a git submodule. This
-means that the first thing that you need to do to build is to initialize the
-submodule:
+A version of cnbt that has been tested to work is included as a git submodule.
+This means that the first thing that you need to do to build is to initialize
+the submodule:
 
     $ git clone git://github.com/zqad/mcsign.git
     Cloning, blah blah.
@@ -29,20 +29,8 @@ just remove that argument in the cnbt Makefile.
 Running
 -------
 
-mcsign is not user friendly. At all. It accepts two and only two arguments on
-the command line:
-
-* The path to the minecraft world directory (usually named 'world/', and
-  located inside the minecraft directory)
-* The path where output files should be put.
-
-When started, mcsign reads paired region coordinates on stdin and generates
-output files, one per region given that the region contains at least one
-matching sign.
-
-NOTE: In order to support incremental updates, mcsign will erase existing
-output files if the corresponding region does not have a matching sign. This is
-done to catch the case where the last sign is removed from a region.
+mcsign is becoming increasingly user friendly. Run mcsign with -h or --help to
+get information about arguments.
 
 Matching signs is controlled by a #define in mcsign.c that does a strcmp on the
 first text line on a sign. By default, this is set to "#map" without the

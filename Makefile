@@ -27,6 +27,7 @@ endif
 endif
 
 $(TARGET): $(subst .c,.o,$(SRC_FILES)) $(EXTRA_DEPS)
+	$(CC) $^ -o $@ $(LDFLAGS)
 
 $(CNBT_DIR)/libnbt.a:
 	make -C $(CNBT_DIR)
